@@ -35,3 +35,22 @@ Contents:
     16 compute_percentage_change
 '''
 
+def compute_null_pct(df):
+    '''
+    Print count and percentage of null values for dataframe columns
+
+    Args:
+    df (pd.DataFrame): subject dataframe
+
+    Return:
+    None
+    '''
+    #Create auxiliary dataframe to hold results, and
+    # Get count of null values for dataframe columns
+    aux_df = pd.DataFrame(df.isnull().sum()).reset_index().rename(
+                             columns={'index': 'column', 0: 'count'})
+
+    # Get percentage of null values for dataframe columns
+    aux_df['pct'] = np.around(aux_df['count'] * 100 / df.shape[0], 2)
+    # Show output
+    print(aux_df.to_string(index=False))
