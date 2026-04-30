@@ -168,61 +168,73 @@ def get_offer_engagements(aux_df, viewed_df, completed_df, transactions_df):
     offer_start_time = aux_df['offer_start_time']
     offer_end_time = aux_df['offer_end_time']
 
+    # Build cached lookup dictionaries on first call to avoid repeated DataFrame filtering
+    # Store them as function attributes so subsequent calls reuse them
+    if not hasattr(get_offer_engagements, "_cached_lookups"):
+        # viewed_lookup: (customer_id, offer_id) -> sorted list of times
+        viewed_lookup = {}
+        for _, r in viewed_df[['customer_id', 'offer_id', 'time']].iterrows():
+            key = (r['customer_id'], r['offer_id'])
+            viewed_lookup.setdefault(key, []).append(r['time'])
 
-    # PART A -- Get offer_viewed_time
+        for k in viewed_lookup:
+            viewed_lookup[k].sort()
 
-    # Get view time from `viewed_df`
-    viewed_time_list = viewed_df.loc[
-        # Lookup the identified record
-        (viewed_df['customer_id'] == customer_id) &
-        (viewed_df['offer_id'] == offer_id) &
-        # Assess view time is in duration
-        (viewed_df['time'] >= offer_start_time) &
-        (viewed_df['time'] <= offer_end_time)
-    ]['time'].tolist()
+        # completed_lookup: (customer_id, offer_id) -> sorted list of times
+        completed_lookup = {}
+        for _, r in completed_df[['customer_id', 'offer_id', 'time']].iterrows():
+            key = (r['customer_id'], r['offer_id'])
+            completed_lookup.setdefault(key, []).append(r['time'])
 
-    # Store view time if available in list else return NaN
-    offer_viewed_time = np.NaN if not viewed_time_list else viewed_time_list[0]
+        for k in completed_lookup:
+            completed_lookup[k].sort()
 
+        # transactions_lookup: customer_id -> sorted list of times
+        transactions_lookup = {}
+        for _, r in transactions_df[['customer_id', 'time']].iterrows():
+            key = r['customer_id']
+            transactions_lookup.setdefault(key, []).append(r['time'])
+
+        for k in transactions_lookup:
+            transactions_lookup[k].sort()
+
+        # attach to function for reuse
+        get_offer_engagements._cached_lookups = {
+            'viewed': viewed_lookup,
+            'completed': completed_lookup,
+            'transactions': transactions_lookup
+        }
+
+    lookups = get_offer_engagements._cached_lookups
+
+    # PART A -- Get offer_viewed_time using lookup
+    key = (customer_id, offer_id)
+    candidate_views = lookups['viewed'].get(key, [])
+    offer_viewed_time = np.nan
+    # find first view within [start, end]
+    for t in candidate_views:
+        if (t >= offer_start_time) and (t <= offer_end_time):
+            offer_viewed_time = t
+            break
 
     # PART B -- Get offer_completed_time
-
-    # Get `time` from `completed_df` if offer is "bogo" or "disc"
+    offer_completed_time = np.nan
     if aux_df['type_informational'] == 0:
-        completed_time_list = completed_df.loc[
-            # Lookup the identified record
-            (completed_df['customer_id'] == customer_id) &
-            (completed_df['offer_id'] == offer_id) &
-            # Assess completion time is after view and in duration
-            (completed_df['time'] >= offer_viewed_time) &
-            (completed_df['time'] <= offer_end_time )
-        ]['time'].tolist()
+        # completed offers (bogo/discount)
+        candidate_completions = lookups['completed'].get(key, [])
+        for t in candidate_completions:
+            if (t >= offer_viewed_time) and (t <= offer_end_time):
+                offer_completed_time = t
+                break
+    else:
+        # informational: use customer transactions
+        candidate_tx = lookups['transactions'].get(customer_id, [])
+        for t in candidate_tx:
+            if (t >= offer_viewed_time) and (t <= offer_end_time):
+                offer_completed_time = t
+                break
 
-    # Get `time` from `transactions_df` if offer is "info"
-    if aux_df['type_informational'] == 1:
-
-        # Get 'time' for all customer transactions
-        customer_transactions = transactions_df.loc[
-            (transactions_df.customer_id == customer_id)
-        ]['time'].tolist()
-
-        # Instantiate list
-        completed_time_list = []
-
-        for transaction_time in customer_transactions:
-            # Assess transaction time is after view and in duration
-            if ((transaction_time >= offer_viewed_time) &
-                (transaction_time <= offer_end_time)):
-                completed_time_list.append(transaction_time)
-
-    # Store completion time if available in list else return NaN
-    offer_completed_time = np.NaN if not completed_time_list else completed_time_list[0]
-
-
-    # Create return object
-    output_value = [offer_viewed_time, offer_completed_time]
-
-    return output_value
+    return [offer_viewed_time, offer_completed_time]
 
 
 def split_columns_by_offer_type(df, target_columns):
@@ -390,10 +402,10 @@ def get_transactions_allotment(df, aux_df, transactions_df):
     # PART B -- Get recency for RFM score
 
     # Get recency_promo: time of most recent promo transaction
-    recency_promo = np.NaN if not promo else promo[-1][0]
+    recency_promo = np.nan if not promo else promo[-1][0]
 
     # Get recency_nonpromo: time of most recent nonpromo transaction
-    recency_nonpromo = np.NaN if not nonpromo else nonpromo[-1][0]
+    recency_nonpromo = np.nan if not nonpromo else nonpromo[-1][0]
 
 
     # Create return object
